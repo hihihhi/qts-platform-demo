@@ -17,6 +17,53 @@ Standard library only; the demo runs in seconds.
 
 Implemented with AI coding agents under Oscar's design and review.
 
+The layers a SYNTHETIC delivery passes through, and the seven gates that check them:
+
+```mermaid
+flowchart TB
+    subgraph lake["minilake layers, built by pipeline.build"]
+        syn["synth.generate<br/>SYNTHETIC delivery,<br/>planted problems"]
+        raw[("raw/<br/>read-only files,<br/>SHA-256 manifest")]
+        typ[("tables/trades, quotes<br/>typed day partitions")]
+        cln[("tables/trades_clean,<br/>quotes_clean<br/>plus session, flags")]
+        q["query.fetch<br/>pinned snapshot"]
+    end
+    ct[("tables/contended<br/>one table, many processes")]
+    g1{{"gate 1: checksums"}}
+    g2{{"gate 2: layer diff"}}
+    g3{{"gate 3: rule counts"}}
+    g4{{"gate 4: auction labels"}}
+    g5{{"gate 5: as-of guard"}}
+    g6{{"gate 6: pinned snapshot"}}
+    g7{{"gate 7: concurrency"}}
+    syn -->|"raw.ingest:<br/>copied byte for byte"| raw
+    raw -->|"pipeline.typed_columns:<br/>cast by schema, none dropped"| typ
+    typ ==>|"cleanse.cleanse_day: label,<br/>flag, correct; drop only<br/>exact duplicates"| cln
+    cln ==>|"table.read of<br/>one pinned version"| q
+    raw -.->|"raw.verify; an altered<br/>byte must be caught"| g1
+    cln -.->|"layer_diff:<br/>typed against cleansed"| g2
+    cln -.->|"hits against<br/>the planted counts"| g3
+    cln -.->|"labels against<br/>ground truth"| g4
+    q -.->|"no row at or<br/>after the end time"| g5
+    q -.->|"publish over<br/>pinned v1"| g6
+    ct -.->|"contend.run: readers,<br/>writers, rewriter"| g7
+    classDef data fill:#dbeafe,stroke:#1d4ed8,color:#0b1220
+    classDef step fill:#f1f5f9,stroke:#475569,color:#0b1220
+    classDef gate fill:#fef3c7,stroke:#b45309,color:#0b1220
+    classDef out  fill:#dcfce7,stroke:#15803d,color:#0b1220
+    classDef ext  fill:#f8fafc,stroke:#94a3b8,color:#0b1220,stroke-dasharray:4 3
+    classDef key  fill:#ede9fe,stroke:#6d28d9,color:#0b1220,stroke-width:2px
+    class syn ext
+    class raw,typ,ct data
+    class cln key
+    class q out
+    class g1,g2,g3,g4,g5,g6,g7 gate
+```
+
+Where in the code: [synth.py](minilake/synth.py), [raw.py](minilake/raw.py), [pipeline.py](minilake/pipeline.py),
+[cleanse.py](minilake/cleanse.py), [table.py](minilake/table.py), [query.py](minilake/query.py), [contend.py](minilake/contend.py),
+[gates.py](minilake/gates.py).
+
 ```bash
 bash scripts/demo.sh    # every layer on SYNTHETIC data, then its checks; exit 0 only if all pass
 ```
@@ -61,6 +108,50 @@ trades stamped in UTC instead of exchange time, closing-auction trades, and a mi
   path hands over whole days, and an as-of guard withholds every row from `to` on;
   `gaps="carry_back"` looks only backwards, and `gaps="closest"` needs `permit_future=True`.
 
+What cleansing does to each typed row: one rule removes, the others label, flag or correct, and the
+layer diff holds the result to what the rules name.
+
+```mermaid
+flowchart TD
+    row["one typed row<br/>of one day"]
+    dup{{"exact repeat of a<br/>row already seen?"}}
+    drop["dropped: exact_duplicate,<br/>the only rule that removes"]
+    utc{{"ts stamped in UTC<br/>(+00:00)?"}}
+    fix["ts corrected to<br/>exchange time"]
+    log[("correction log: row, column,<br/>vendor value, corrected value, rule")]
+    ses["session_of(ts): continuous,<br/>closing_auction or out_of_hours"]
+    flg["flags: out_of_hours,<br/>off_band_price, crossed_quote"]
+    kept[("cleansed row kept:<br/>typed columns plus<br/>session and flags")]
+    cnt[("rule_counts:<br/>hits per rule per day")]
+    ld{{"layer_diff: undo the log;<br/>must equal typed rows<br/>minus exact duplicates"}}
+    row -->|"cleanse_day reads it"| dup
+    dup -->|"yes"| drop
+    dup ==>|"no"| utc
+    utc -->|"yes: utc_stamp"| fix
+    fix -->|"vendor's value logged"| log
+    fix -->|"corrected row"| ses
+    utc ==>|"no"| ses
+    ses ==>|"closing_auction is a<br/>label, never a drop"| flg
+    flg ==>|"flagged rows are kept too"| kept
+    drop -.->|"counted"| cnt
+    flg -.->|"each hit counted"| cnt
+    kept -.->|"checked by"| ld
+    log -.->|"undone by"| ld
+    classDef data fill:#dbeafe,stroke:#1d4ed8,color:#0b1220
+    classDef step fill:#f1f5f9,stroke:#475569,color:#0b1220
+    classDef gate fill:#fef3c7,stroke:#b45309,color:#0b1220
+    classDef out  fill:#dcfce7,stroke:#15803d,color:#0b1220
+    classDef ext  fill:#f8fafc,stroke:#94a3b8,color:#0b1220,stroke-dasharray:4 3
+    classDef key  fill:#ede9fe,stroke:#6d28d9,color:#0b1220,stroke-width:2px
+    class row,kept data
+    class dup,utc,ld gate
+    class drop,fix,flg step
+    class log,cnt data
+    class ses key
+```
+
+Where in the code: `cleanse_day` and `layer_diff` in [cleanse.py](minilake/cleanse.py).
+
 The seven gates ([minilake/gates.py](minilake/gates.py)). A gate that looks for a defect proves
 nothing by staying quiet, so each runs a control in the same run: a planted defect it must catch,
 or the synthetic ground truth it must match.
@@ -76,6 +167,40 @@ or the synthetic ground truth it must match.
 | concurrency | reader, writer and rewriter processes: every commit acknowledged, none lost, no torn read | a planted torn read is caught; a stale replace is refused |
 
 Reader, writer and rewriter processes run under a deadline, so a crash or a hang fails the gate.
+The concurrency gate, as one run of it unfolds: writers commit by atomic rename and retry on the
+next number, the rewriter's stale replace is refused and retried, and readers only ever see whole
+versions.
+
+```mermaid
+sequenceDiagram
+    participant W as writers (2 processes)
+    participant X as rewriter
+    participant T as tables/contended
+    participant R as readers (4 processes)
+    Note over T: seed version v1, pinned before the processes start
+    par each writer, 20 commits
+        W->>T: table.publish: stage a folder,<br/>os.rename to the next version
+        alt the rename wins
+            T-->>W: new version number, commit acknowledged
+        else another writer took that number
+            T-->>W: rename fails, rebase onto its manifest,<br/>try the next number
+        end
+    and the rewriter, until the writers finish
+        X->>T: table.read(latest), then<br/>table.replace(partition, base)
+        alt a version after base wrote that partition
+            T-->>X: Conflict, counted, re-read and retry
+        else nothing overtook it
+            T-->>X: new version, partition replaced
+        end
+    and the readers, until the writers finish
+        R->>T: table.read(table.latest)
+        T-->>R: the whole version, checksums verified,<br/>or TornRead
+    end
+    Note over W,R: Under a deadline. Every acknowledged commit held exactly once,<br/>no torn read, pinned v1 unchanged, no process crashed or hung.
+```
+
+Where in the code: `run` in [contend.py](minilake/contend.py); `publish`, `replace` and `read` in
+[table.py](minilake/table.py).
 
 ## Results
 
@@ -114,14 +239,7 @@ CI runs `scripts/check.sh` on Python 3.9 and 3.12 ([.github/workflows/ci.yml](.g
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    synth["synth<br/>SYNTHETIC delivery,<br/>planted problems"] --> raw["raw<br/>byte for byte,<br/>SHA-256 manifest"]
-    raw --> typed["typed<br/>versioned day partitions"]
-    typed --> clean["cleansed<br/>labels, flags, corrections;<br/>exact duplicates removed"]
-    clean --> query["fetch()<br/>pinned snapshot, as-of guard"]
-    gates["gates<br/>seven invariants,<br/>each with a control"] -.-> raw & typed & clean & query
-```
+The diagram at the top shows how these modules connect.
 
 | Module | Role |
 |---|---|

@@ -3,8 +3,10 @@
 [![ci](https://github.com/hihihhi/qts-platform-demo/actions/workflows/ci.yml/badge.svg)](https://github.com/hihihhi/qts-platform-demo/actions/workflows/ci.yml) [![lint](https://github.com/hihihhi/qts-platform-demo/actions/workflows/lint.yml/badge.svg)](https://github.com/hihihhi/qts-platform-demo/actions/workflows/lint.yml)
 
 **minilake** is a small, runnable stand-in for a research market-data platform: a raw, a typed and
-a cleansed layer, versioned tables with pinned reads, one query function, and seven gates that each
-prove an invariant, with a control, on every run. Standard library only; the demo runs in seconds.
+a cleansed layer, versioned tables with pinned reads, and one query function. On SYNTHETIC data it
+shows that delivered files stay untouched, cleansing changes only what its rules name, a pinned read
+returns the same rows later, no query sees the future and concurrent writers lose no commits.
+Standard library only; the demo runs in seconds.
 
 - It was written only from the public write-up of the CUHK Quant Trading Society's research data
   platform: [qts-platform-showcase](https://github.com/hihihhi/qts-platform-showcase). That
@@ -16,7 +18,7 @@ prove an invariant, with a control, on every run. Standard library only; the dem
 Implemented with AI coding agents under Oscar's design and review.
 
 ```bash
-bash scripts/demo.sh    # every layer on SYNTHETIC data, then the seven gates; exit 0 only if all pass
+bash scripts/demo.sh    # every layer on SYNTHETIC data, then its checks; exit 0 only if all pass
 ```
 
 ## The problem

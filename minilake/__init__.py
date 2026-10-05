@@ -3,7 +3,7 @@ the platform's code.
 
 A small stand-in, standard library only, that shows the write-up's ideas end to end on SYNTHETIC
 data. It shares no code with the platform the write-up describes. The write-up:
-https://github.com/hihihhi/qts-platform-showcase
+https://github.com/oscar-chw/qts-platform-showcase
 
     synth     a SYNTHETIC tick delivery with planted problems
     raw       layer 1: delivered files kept byte for byte, under a SHA-256 manifest

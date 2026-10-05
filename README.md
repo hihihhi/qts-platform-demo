@@ -1,6 +1,6 @@
 # qts-platform-demo: minilake
 
-[![ci](https://github.com/hihihhi/qts-platform-demo/actions/workflows/ci.yml/badge.svg)](https://github.com/hihihhi/qts-platform-demo/actions/workflows/ci.yml) [![lint](https://github.com/hihihhi/qts-platform-demo/actions/workflows/lint.yml/badge.svg)](https://github.com/hihihhi/qts-platform-demo/actions/workflows/lint.yml)
+[![ci](https://github.com/oscar-chw/qts-platform-demo/actions/workflows/ci.yml/badge.svg)](https://github.com/oscar-chw/qts-platform-demo/actions/workflows/ci.yml) [![lint](https://github.com/oscar-chw/qts-platform-demo/actions/workflows/lint.yml/badge.svg)](https://github.com/oscar-chw/qts-platform-demo/actions/workflows/lint.yml)
 
 **minilake** is a small, runnable stand-in for a research market-data platform: a raw, a typed and
 a cleansed layer, versioned tables with pinned reads, and one query function. On SYNTHETIC data it
@@ -9,7 +9,7 @@ returns the same rows later, no query sees the future and concurrent writers los
 Standard library only; the demo runs in seconds.
 
 - It was written only from the public write-up of the CUHK Quant Trading Society's research data
-  platform: [qts-platform-showcase](https://github.com/hihihhi/qts-platform-showcase). That
+  platform: [qts-platform-showcase](https://github.com/oscar-chw/qts-platform-showcase). That
   write-up describes the real platform and carries its numbers.
 - It is not the platform's code and shares none of it. The platform's source is closed.
 - Every number in this repository comes from SYNTHETIC data that [minilake/synth.py](minilake/synth.py)
@@ -32,7 +32,7 @@ exactly the same rows. Turned into guarantees a research data platform has to ke
 - **Cleansing changes only what its rules name.** It labels, flags or corrects, keeps the vendor's
   original value, and removes nothing but exact duplicates. The write-up records why: a time-window
   filter had silently discarded a day's closing-auction trades
-  ([showcase](https://github.com/hihihhi/qts-platform-showcase#architecture)).
+  ([showcase](https://github.com/oscar-chw/qts-platform-showcase#architecture)).
 - **A result can be reproduced on the same rows**: readers pin a version, and a later publish never
   changes what a pinned read returns.
 - **A query never sees the future**: nothing at or after its end time is returned, and gap fills
@@ -162,14 +162,14 @@ flowchart LR
   vendor deliveries have quirks this generator does not model.
 - **Not the platform.** It shares no code with the platform and runs none of its stack; its
   numbers say nothing about the platform. The platform's own figures, labelled and sourced, are in
-  [qts-platform-showcase](https://github.com/hihihhi/qts-platform-showcase).
+  [qts-platform-showcase](https://github.com/oscar-chw/qts-platform-showcase).
 - **One machine.** The concurrency gate runs processes on one local file system and relies on its
   atomic rename; it says nothing about object stores or network file systems.
 
 ## What I learned
 
 These are lessons the platform write-up records
-([showcase, "What I learned"](https://github.com/hihihhi/qts-platform-showcase#what-i-learned)),
+([showcase, "What I learned"](https://github.com/oscar-chw/qts-platform-showcase#what-i-learned)),
 the ones that concern the ideas this stand-in puts into code. It records no new ones.
 
 1. **The worst failures pass for health**: a check that passes against a stand-in for the thing it

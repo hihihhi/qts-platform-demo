@@ -17,36 +17,35 @@ Standard library only; the demo runs in seconds.
 
 Implemented with AI coding agents under Oscar's design and review.
 
-The layers a SYNTHETIC delivery passes through, and the seven gates that check them:
+The layers a SYNTHETIC delivery passes through, built by `pipeline.build`, and the seven gates that
+check them, run in order by `gates.run`:
 
 ```mermaid
 flowchart TB
-    subgraph lake["minilake layers, built by pipeline.build"]
-        syn["synth.generate<br/>SYNTHETIC delivery,<br/>planted problems"]
-        raw[("raw/<br/>read-only files,<br/>SHA-256 manifest")]
-        typ[("tables/trades, quotes<br/>typed day partitions")]
-        cln[("tables/trades_clean,<br/>quotes_clean<br/>plus session, flags")]
-        q["query.fetch<br/>pinned snapshot"]
-    end
-    ct[("tables/contended<br/>one table, many processes")]
-    g1{{"gate 1: checksums"}}
-    g2{{"gate 2: layer diff"}}
-    g3{{"gate 3: rule counts"}}
-    g4{{"gate 4: auction labels"}}
-    g5{{"gate 5: as-of guard"}}
-    g6{{"gate 6: pinned snapshot"}}
-    g7{{"gate 7: concurrency"}}
-    syn -->|"raw.ingest:<br/>copied byte for byte"| raw
-    raw -->|"pipeline.typed_columns:<br/>cast by schema, none dropped"| typ
-    typ ==>|"cleanse.cleanse_day: label,<br/>flag, correct; drop only<br/>exact duplicates"| cln
-    cln ==>|"table.read of<br/>one pinned version"| q
-    raw -.->|"raw.verify; an altered<br/>byte must be caught"| g1
-    cln -.->|"layer_diff:<br/>typed against cleansed"| g2
-    cln -.->|"hits against<br/>the planted counts"| g3
+    syn["synth.generate<br/>SYNTHETIC delivery,<br/>planted problems"]
+    raw[("raw/<br/>read-only files,<br/>SHA-256 manifest")]
+    typ[("tables/trades, quotes<br/>typed day partitions")]
+    cln[("tables/trades_clean,<br/>quotes_clean<br/>plus session, flags")]
+    q["query.fetch<br/>pinned snapshot"]
+    ct[("tables/contended<br/>one table,<br/>many processes")]
+    g1{{"gate 1:<br/>checksums"}}
+    g2{{"gate 2:<br/>layer diff"}}
+    g3{{"gate 3:<br/>rule counts"}}
+    g4{{"gate 4:<br/>auction labels"}}
+    g5{{"gate 5:<br/>as-of guard"}}
+    g6{{"gate 6:<br/>pinned snapshot"}}
+    g7{{"gate 7:<br/>concurrency"}}
+    syn -->|"raw.ingest:<br/>copied byte<br/>for byte"| raw
+    raw -->|"pipeline.typed_columns:<br/>cast by schema,<br/>none dropped"| typ
+    typ ==>|"cleanse.cleanse_day:<br/>label, flag, correct;<br/>drop only exact<br/>duplicates"| cln
+    cln ==>|"table.read of<br/>one pinned<br/>version"| q
+    raw -.->|"raw.verify;<br/>an altered byte<br/>must be caught"| g1
+    cln -.->|"layer_diff:<br/>typed against<br/>cleansed"| g2
+    cln -.->|"hits against<br/>the planted<br/>counts"| g3
     cln -.->|"labels against<br/>ground truth"| g4
-    q -.->|"no row at or<br/>after the end time"| g5
+    q -.->|"no row at<br/>or after the<br/>end time"| g5
     q -.->|"publish over<br/>pinned v1"| g6
-    ct -.->|"contend.run: readers,<br/>writers, rewriter"| g7
+    ct -.->|"contend.run:<br/>readers, writers,<br/>rewriter"| g7
     classDef data fill:#dbeafe,stroke:#1d4ed8,color:#0b1220
     classDef step fill:#f1f5f9,stroke:#475569,color:#0b1220
     classDef gate fill:#fef3c7,stroke:#b45309,color:#0b1220
@@ -173,30 +172,30 @@ versions.
 
 ```mermaid
 sequenceDiagram
-    participant W as writers (2 processes)
+    participant W as writers<br/>(2 processes)
     participant X as rewriter
     participant T as tables/contended
-    participant R as readers (4 processes)
-    Note over T: seed version v1, pinned before the processes start
+    participant R as readers<br/>(4 processes)
+    Note over T: seed version v1, pinned<br/>before the processes start
     par each writer, 20 commits
         W->>T: table.publish: stage a folder,<br/>os.rename to the next version
         alt the rename wins
-            T-->>W: new version number, commit acknowledged
+            T-->>W: new version number,<br/>commit acknowledged
         else another writer took that number
-            T-->>W: rename fails, rebase onto its manifest,<br/>try the next number
+            T-->>W: rename fails, rebase<br/>onto its manifest,<br/>try the next number
         end
     and the rewriter, until the writers finish
         X->>T: table.read(latest), then<br/>table.replace(partition, base)
         alt a version after base wrote that partition
-            T-->>X: Conflict, counted, re-read and retry
+            T-->>X: Conflict, counted,<br/>re-read and retry
         else nothing overtook it
-            T-->>X: new version, partition replaced
+            T-->>X: new version,<br/>partition replaced
         end
     and the readers, until the writers finish
         R->>T: table.read(table.latest)
-        T-->>R: the whole version, checksums verified,<br/>or TornRead
+        T-->>R: the whole version,<br/>checksums verified,<br/>or TornRead
     end
-    Note over W,R: Under a deadline. Every acknowledged commit held exactly once,<br/>no torn read, pinned v1 unchanged, no process crashed or hung.
+    Note over W,R: Under a deadline. Every acknowledged commit<br/>held exactly once, no torn read, pinned v1<br/>unchanged, no process crashed or hung.
 ```
 
 Where in the code: `run` in [contend.py](minilake/contend.py); `publish`, `replace` and `read` in

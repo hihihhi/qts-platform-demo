@@ -1,21 +1,14 @@
-# qts-platform-demo: minilake
+# minilake: a runnable stand-in for a research market-data platform
 
 [![ci](https://github.com/oscar-chw/qts-platform-demo/actions/workflows/ci.yml/badge.svg)](https://github.com/oscar-chw/qts-platform-demo/actions/workflows/ci.yml) [![lint](https://github.com/oscar-chw/qts-platform-demo/actions/workflows/lint.yml/badge.svg)](https://github.com/oscar-chw/qts-platform-demo/actions/workflows/lint.yml)
 
 **minilake** is a small, runnable stand-in for a research market-data platform: a raw, a typed and
-a cleansed layer, versioned tables with pinned reads, and one query function. On SYNTHETIC data it
-shows that delivered files stay untouched, cleansing changes only what its rules name, a pinned read
-returns the same rows later, no query sees the future and concurrent writers lose no commits.
-Standard library only; the demo runs in seconds.
-
-- It was written only from the public write-up of the CUHK Quant Trading Society's research data
-  platform: [qts-platform-showcase](https://github.com/oscar-chw/qts-platform-showcase). That
-  write-up describes the real platform and carries its numbers.
-- It is not the platform's code and shares none of it. The platform's source is closed.
-- Every number in this repository comes from SYNTHETIC data that [minilake/synth.py](minilake/synth.py)
-  generates. None of it is market data, and none of it says anything about the platform's scale or speed.
-
-Implemented with AI coding agents under Oscar's design and review.
+a cleansed layer, versioned tables with pinned reads, and one query function, in the standard
+library only. It is for readers of the [qts-platform-showcase](https://github.com/oscar-chw/qts-platform-showcase)
+write-up who want to run its ideas; it was written only from that write-up and shares no code with
+the platform. On SYNTHETIC data, all seven gates pass, each with a control in the same run:
+delivered files stay untouched, cleansing changes only what its rules name, a pinned read returns
+the same rows later, no query sees the future and concurrent writers lose no commits.
 
 The layers a SYNTHETIC delivery passes through, built by `pipeline.build`, and the seven gates that
 check them, run in order by `gates.run`:
@@ -63,31 +56,14 @@ Where in the code: [synth.py](minilake/synth.py), [raw.py](minilake/raw.py), [pi
 [cleanse.py](minilake/cleanse.py), [table.py](minilake/table.py), [query.py](minilake/query.py), [contend.py](minilake/contend.py),
 [gates.py](minilake/gates.py).
 
-```bash
-bash scripts/demo.sh    # every layer on SYNTHETIC data, then its checks; exit 0 only if all pass
-```
-
-## The problem
+## Why this exists
 
 Researchers who study markets at tick level need three things raw vendor files cannot give them:
 data they can trust, queries that answer quickly, and results they can reproduce next month on
-exactly the same rows. Turned into guarantees a research data platform has to keep:
+exactly the same rows. The platform the showcase describes keeps those guarantees, but its source
+is closed; minilake puts the same guarantees into code anyone can run and break.
 
-- **Delivered files are never altered**, so every later layer can be rebuilt from them and any
-  changed byte is detected.
-- **Cleansing changes only what its rules name.** It labels, flags or corrects, keeps the vendor's
-  original value, and removes nothing but exact duplicates. The write-up records why: a time-window
-  filter had silently discarded a day's closing-auction trades
-  ([showcase](https://github.com/oscar-chw/qts-platform-showcase#architecture)).
-- **A result can be reproduced on the same rows**: readers pin a version, and a later publish never
-  changes what a pinned read returns.
-- **A query never sees the future**: nothing at or after its end time is returned, and gap fills
-  that would copy a later value need an explicit opt-in.
-- **Asking for something that is not there raises an error** instead of returning an empty or
-  silently partial table.
-- **Concurrent writers never lose a commit, and readers never see a half-written version.**
-
-## Approach (methods and algorithms)
+## Approach
 
 [minilake/synth.py](minilake/synth.py) generates a small SYNTHETIC tick delivery with planted
 problems: exact duplicates, an evening print, a price far off the previous trade, a crossed quote,
@@ -102,10 +78,14 @@ trades stamped in UTC instead of exchange time, closing-auction trades, and a mi
   discarding that commit.
 - **cleansed** labels, flags or corrects and drops only exact duplicates. Each rule's hits are
   counted per day, and every corrected cell goes into a correction log with the vendor's value.
+  The write-up records why: a time-window filter had silently discarded a day's closing-auction
+  trades ([showcase](https://github.com/oscar-chw/qts-platform-showcase#design-decisions-and-trade-offs)).
 - **query** is `fetch(lake, table, universe, from_, to, freq=..., snapshot=..., gaps=...)`, with
   partition pruning and explicit errors (`MissingDay`, `NoSuchInstrument`, `LookAhead`). The read
   path hands over whole days, and an as-of guard withholds every row from `to` on;
   `gaps="carry_back"` looks only backwards, and `gaps="closest"` needs `permit_future=True`.
+- **seven gates** check every guarantee, each with a control in the same run: a planted defect it
+  must catch, or the generator's ground truth it must match ([docs/gates.md](docs/gates.md)).
 
 What cleansing does to each typed row: one rule removes, the others label, flag or correct, and the
 layer diff holds the result to what the rules name.
@@ -151,55 +131,18 @@ flowchart TD
 
 Where in the code: `cleanse_day` and `layer_diff` in [cleanse.py](minilake/cleanse.py).
 
-The seven gates ([minilake/gates.py](minilake/gates.py)). A gate that looks for a defect proves
-nothing by staying quiet, so each runs a control in the same run: a planted defect it must catch,
-or the synthetic ground truth it must match.
+### Design decisions and trade-offs
 
-| Gate | Invariant | Control in the same run |
-|---|---|---|
-| checksums | every raw file matches its manifest | one altered byte in a raw file is reported; one in a table file makes `fetch` refuse the read |
-| layer diff | undo the logged corrections and the cleansed rows equal the typed rows minus exact duplicates | an unnamed value change, an unlogged time change and a wrong session label are each caught |
-| rule counts | each planted problem is found exactly as often as it was planted | the planted counts themselves |
-| auction labels | every closing-auction trade, and only those, is labelled, kept and unflagged | the generator's ground truth |
-| as-of guard | no row at or after `to`; an open bar is withheld; carry-back fills only copy earlier bars | the read path hands over later rows, and the guard must withhold them; `gaps="closest"` must be refused |
-| pinned snapshot | a publish over a pinned version leaves the pinned read unchanged | the latest version must differ |
-| concurrency | reader, writer and rewriter processes: every commit acknowledged, none lost, no torn read | a planted torn read is caught; a stale replace is refused |
-
-Reader, writer and rewriter processes run under a deadline, so a crash or a hang fails the gate.
-The concurrency gate, as one run of it unfolds: writers commit by atomic rename and retry on the
-next number, the rewriter's stale replace is refused and retried, and readers only ever see whole
-versions.
-
-```mermaid
-sequenceDiagram
-    participant W as writers<br/>(2 processes)
-    participant X as rewriter
-    participant T as tables/contended
-    participant R as readers<br/>(4 processes)
-    Note over T: seed version v1, pinned<br/>before the processes start
-    par each writer, 20 commits
-        W->>T: table.publish: stage a folder,<br/>os.rename to the next version
-        alt the rename wins
-            T-->>W: new version number,<br/>commit acknowledged
-        else another writer took that number
-            T-->>W: rename fails, rebase<br/>onto its manifest,<br/>try the next number
-        end
-    and the rewriter, until the writers finish
-        X->>T: table.read(latest), then<br/>table.replace(partition, base)
-        alt a version after base wrote that partition
-            T-->>X: Conflict, counted,<br/>re-read and retry
-        else nothing overtook it
-            T-->>X: new version,<br/>partition replaced
-        end
-    and the readers, until the writers finish
-        R->>T: table.read(table.latest)
-        T-->>R: the whole version,<br/>checksums verified,<br/>or TornRead
-    end
-    Note over W,R: Under a deadline. Every acknowledged commit<br/>held exactly once, no torn read, pinned v1<br/>unchanged, no process crashed or hung.
-```
-
-Where in the code: `run` in [contend.py](minilake/contend.py); `publish`, `replace` and `read` in
-[table.py](minilake/table.py).
+- **Standard library only.** JSON column files stand in for a columnar file format, so the demo
+  runs anywhere with nothing to install, and the platform's own stack is deliberately not used.
+  The cost is speed: nothing here is fast, and no timing is reported.
+- **Flag, never drop.** A correction keeps the vendor's value in the log, so the layer diff can
+  prove that cleansing changed only what the rules name.
+- **Publish by atomic rename.** A version becomes visible all at once or not at all.
+- **Errors over empty results.** A missing day, an unknown symbol or a look-ahead fill raises;
+  `on_missing="skip"` must be asked for, and it names the days it skipped.
+- **A control in every gate**, and the concurrency gate's processes run under a deadline, so a
+  silent gate cannot pass for a healthy one.
 
 ## Results
 
@@ -222,11 +165,10 @@ The synthetic delivery is seeded, so every figure above repeats exactly on the n
 concurrency line's rewrite, conflict and read counts, which depend on how the processes interleave.
 `scripts/check_docs.py` re-runs the demo and fails if this block differs from its output in
 anything but those three counts. The walkthrough above the gates (per-rule hits per day, the
-correction log, bars and the errors `fetch` raises) is printed by the same command.
+correction log, bars and the errors `fetch` raises) is printed by the same command. What each gate
+checks and its control: [docs/gates.md](docs/gates.md).
 
-## How to run
-
-Python 3.9 or later, standard library only; nothing to install. From the top of the repository:
+## Quick start
 
 ```bash
 bash scripts/demo.sh                      # every layer, then the gates; exit 0 only if all pass
@@ -234,41 +176,25 @@ python3 -m unittest discover -s tests     # one test class per layer, plus the g
 bash scripts/check.sh                     # the document checks and their self-test, the tests, the demo
 ```
 
-CI runs `scripts/check.sh` on Python 3.9 and 3.12 ([.github/workflows/ci.yml](.github/workflows/ci.yml)).
+Python 3.9 or later, standard library only; nothing to install. CI runs `scripts/check.sh` on
+Python 3.9 and 3.12 ([ci.yml](.github/workflows/ci.yml)).
 
-## Architecture
+## Project structure
 
-The diagram at the top shows how these modules connect.
+```text
+minilake/synth.py      the SYNTHETIC delivery and the counts of what it plants
+minilake/raw.py        layer 1: delivered files, read-only, under a SHA-256 manifest
+minilake/table.py      versioned typed tables: atomic publish, pinned reads, conflict on a stale replace
+minilake/pipeline.py   builds the typed and cleansed layers from the raw layer
+minilake/cleanse.py    the cleansing rules, their per-day counts and correction log, the layer diff
+minilake/query.py      fetch(): pinned snapshots, partition pruning, bars and the as-of guard
+minilake/contend.py    concurrent reader, writer and rewriter processes on one table
+minilake/gates.py      every invariant as a check; exit 0 only if all hold
+minilake/__main__.py   the walkthrough, then the gates
+tests/  scripts/       one test class per layer; demo.sh, check.sh, check_docs.py
+```
 
-| Module | Role |
-|---|---|
-| [synth.py](minilake/synth.py) | the SYNTHETIC delivery and the counts of what it plants |
-| [raw.py](minilake/raw.py) | layer 1: delivered files, read-only, under a SHA-256 manifest |
-| [table.py](minilake/table.py) | versioned, typed, column-oriented tables: atomic publish, pinned reads, conflict on a stale replace |
-| [pipeline.py](minilake/pipeline.py) | builds the typed and cleansed layers from the raw layer |
-| [cleanse.py](minilake/cleanse.py) | the cleansing rules, their per-day counts and correction log, and the layer diff |
-| [query.py](minilake/query.py) | `fetch()`: pinned snapshots, partition pruning, bars and the as-of guard |
-| [contend.py](minilake/contend.py) | concurrent reader, writer and rewriter processes on one table |
-| [gates.py](minilake/gates.py) | every invariant as a check; exit 0 only if all hold |
-| [\_\_main\_\_.py](minilake/__main__.py) | the walkthrough, then the gates |
-
-### Design decisions and trade-offs
-
-- **Standard library only.** JSON column files stand in for a columnar file format, so the demo
-  runs anywhere with nothing to install. The platform's own stack is deliberately not used, which
-  also keeps this stand-in clearly separate from it. The cost is speed: nothing here is fast, and
-  no timing is reported.
-- **Flag, never drop.** Only exact duplicates are removed. Every other rule labels, flags or
-  corrects, and a correction keeps the vendor's value in the log, so the layer diff can prove that
-  cleansing changed only what the rules name.
-- **Publish by atomic rename.** A version becomes visible all at once or not at all, and a replace
-  computed from an outdated version raises a conflict to retry rather than silently discarding a
-  concurrent commit.
-- **Errors over empty results.** A missing day, an unknown symbol or a look-ahead fill raises;
-  `on_missing="skip"` must be asked for, and it names the days it skipped.
-- **A control in every gate.** Each gate must catch a planted defect or match the generator's
-  ground truth in the same run, and the concurrency gate's processes run under a deadline, so a
-  silent gate cannot pass for a healthy one.
+Docs: see [docs/README.md](docs/README.md).
 
 ## Limits
 
@@ -276,10 +202,10 @@ The diagram at the top shows how these modules connect.
   plus 1,440 quote rows in the typed layer (printed by `python3 -m minilake`). Nothing here
   measures speed or capacity.
 - **SYNTHETIC data.** The gates find the problems [synth.py](minilake/synth.py) plants; real
-  vendor deliveries have quirks this generator does not model.
+  vendor deliveries have quirks this generator does not model. None of it is market data.
 - **Not the platform.** It shares no code with the platform and runs none of its stack; its
-  numbers say nothing about the platform. The platform's own figures, labelled and sourced, are in
-  [qts-platform-showcase](https://github.com/oscar-chw/qts-platform-showcase).
+  numbers say nothing about the platform's scale or speed. The platform's own figures, labelled
+  and sourced, are in [qts-platform-showcase](https://github.com/oscar-chw/qts-platform-showcase).
 - **One machine.** The concurrency gate runs processes on one local file system and relies on its
   atomic rename; it says nothing about object stores or network file systems.
 
@@ -301,6 +227,11 @@ the ones that concern the ideas this stand-in puts into code. It records no new 
    verification, and `scripts/check_docs.py --self-test` proves each document check goes red on a
    planted defect.
 
-## Licence
+## Credits and licence
 
-MIT, in [LICENSE](LICENSE).
+Written only from the public write-up of the CUHK Quant Trading Society's research data platform,
+[qts-platform-showcase](https://github.com/oscar-chw/qts-platform-showcase), which describes the
+real platform and carries its numbers. This is not the platform's code; the platform's source is
+closed. MIT, in [LICENSE](LICENSE).
+
+Implemented with AI coding agents under Oscar's design and review.

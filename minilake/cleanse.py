@@ -60,17 +60,24 @@ def cleanse_day(kind, cols):
                 hits[rule] += 1
         r["session"] = session_of(r["ts"])
         hits["closing_auction"] += r["session"] == "closing_auction"
-        ref = last.get(r["symbol"])
-        tests = {"out_of_hours": r["session"] == "out_of_hours",
-                 "off_band_price": kind == "trades" and ref is not None and abs(r["price"] / ref - 1) > BAND,
-                 "crossed_quote": kind == "quotes" and r["bid"] > r["ask"]}
+        tests = _flag_tests(kind, r, last)
         r["flags"] = "|".join(rule for rule in FLAGS if tests[rule])
         for rule in FLAGS:
             hits[rule] += tests[rule]
-        if kind == "trades" and not r["flags"]:
-            last[r["symbol"]] = r["price"]
         kept.append(r)
     return {n: [r[n] for r in kept] for n in names}, hits, log
+
+
+def _flag_tests(kind, r, last):
+    """{flag rule: does it fire} for row r, a labelled row in cleansed order; `last` is each symbol's
+    previous unflagged trade price, updated here."""
+    ref = last.get(r["symbol"])
+    tests = {"out_of_hours": r["session"] == "out_of_hours",
+             "off_band_price": kind == "trades" and ref is not None and abs(r["price"] / ref - 1) > BAND,
+             "crossed_quote": kind == "quotes" and r["bid"] > r["ask"]}
+    if kind == "trades" and not any(tests.values()):
+        last[r["symbol"]] = r["price"]
+    return tests
 
 
 def layer_diff(typed, clean, hits, log):
@@ -103,6 +110,14 @@ def layer_diff(typed, clean, hits, log):
         n = sum(rule in f.split("|") for f in clean["flags"])
         if n != hits[rule]:
             problems.append(f"{n} rows flagged {rule}, but the counts name {hits[rule]}")
+    # Each row's flags re-derived from the rules, not only counted: a flag moved to the wrong row
+    # keeps every count right.
+    kind, last = ("quotes" if "bid" in typed else "trades"), {}
+    for i, r in enumerate(dict(zip(clean, values)) for values in zip(*clean.values())):
+        tests = _flag_tests(kind, r, last)
+        if r["flags"] != "|".join(rule for rule in FLAGS if tests[rule]):
+            problems.append(f"row {i}: flags {r['flags']!r} are not what the flag rules give")
+            break
     unknown = {x for f in clean["flags"] for x in f.split("|") if x} - set(FLAGS)
     if unknown:
         problems.append(f"flags no rule declares: {sorted(unknown)}")

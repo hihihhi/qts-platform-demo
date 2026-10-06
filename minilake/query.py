@@ -1,5 +1,5 @@
-"""The query interface. Part of minilake, an independent demonstration system written only from this
-repository's write-up; not the platform's code.
+"""The query interface. Part of minilake, an independent demonstration system written only from the platform's
+public write-up; not the platform's code.
 
 fetch(lake, table, universe, from_, to, freq=None, snapshot=None, gaps=None, permit_future=False)
   - pins a snapshot (the latest version when none is named) and returns its number, so the same
@@ -14,10 +14,11 @@ fetch(lake, table, universe, from_, to, freq=None, snapshot=None, gaps=None, per
     needs permit_future=True. Every filled bar says it was filled, and from which bar.
 `to` is exclusive when it is a time, and covers the whole day when it is a date.
 """
+import re
 from collections import namedtuple
 
 from . import pipeline, table
-from .cleanse import session_of
+from .cleanse import session_of, to_exchange_time
 
 Result = namedtuple("Result", "rows snapshot partitions_read skipped_days withheld")
 
@@ -40,15 +41,22 @@ def bounds(from_, to):
 
 
 def as_of_guard(rows, hi):
-    """(rows before `hi`, how many were withheld): the only place the as-of bound is enforced."""
-    kept = [r for r in rows if r["ts"] < hi]
+    """(rows before `hi`, how many were withheld): the only place the as-of bound is enforced.
+
+    Compared as exchange-time instants: the typed tables still hold the vendor's UTC stamps, which as
+    text sort before every exchange-time stamp of the day and would slip past a text comparison."""
+    kept = [r for r in rows if to_exchange_time(r["ts"]) < hi]
     return kept, len(rows) - len(kept)
 
 
 def fetch(lake, name, universe, from_, to, freq=None, snapshot=None, gaps=None, permit_future=False,
           on_missing="raise"):
+    if not universe:
+        raise NoSuchInstrument("an empty universe asks for nothing; name at least one symbol")
+    if freq is not None and not re.fullmatch(r"[1-9][0-9]*m|1d", freq):
+        raise ValueError(f"freq {freq!r}: use 'Nm' (minutes) or '1d'")
     tdir = pipeline.table_dir(lake, name)
-    snapshot = snapshot or table.latest(tdir)
+    snapshot = table.latest(tdir) if snapshot is None else snapshot
     m = table.manifest(tdir, snapshot)
     lo, hi = bounds(from_, to)
     days = [d for d in pipeline.calendar(lake) if lo[:10] <= d <= hi[:10]]
@@ -59,7 +67,7 @@ def fetch(lake, name, universe, from_, to, freq=None, snapshot=None, gaps=None, 
     if unknown:
         raise NoSuchInstrument(f"{', '.join(unknown)}: not in {name} snapshot {snapshot}")
     cols, opened = table.read(tdir, snapshot, partitions=set(days), symbols=universe)
-    rows = [r for r in table.rows(cols) if r["symbol"] in universe and r["ts"] >= lo]  # no upper bound here
+    rows = [r for r in table.rows(cols) if r["symbol"] in universe and to_exchange_time(r["ts"]) >= lo]  # no upper bound here
     rows, withheld = as_of_guard(rows, hi)
     if freq:
         rows = bars(rows, freq, hi, gaps, permit_future)

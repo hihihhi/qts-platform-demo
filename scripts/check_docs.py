@@ -72,6 +72,9 @@ ACRONYM_OK = {
 }
 # --- end of pattern lists ---
 BLOCK_START, BLOCK_END = "# --- pattern lists:", "# --- end of pattern lists ---"
+# Folders that never ship (.git plus .gitignore). The repo's own lint writes .ruff_cache, whose binary
+# files once failed the scan and the self-test on a working copy that a fresh clone passed.
+UNSHIPPED = (".git", "__pycache__", ".ruff_cache")
 # Extra patterns from a file outside the repository; unset in CI, where the line printed says so.
 PRIVATE = os.environ.get("FORBIDDEN_TERMS_FILE", "")
 
@@ -164,7 +167,7 @@ def check_forbidden(tree, private=PRIVATE):
     mit_lines = {l.strip() for l in MIT_TEXT.splitlines() if l.strip()}
     errors = []
     for d, dirs, files in os.walk(tree):
-        dirs[:] = [x for x in dirs if x not in (".git", "__pycache__")]  # never committed (.gitignore)
+        dirs[:] = [x for x in dirs if x not in UNSHIPPED]
         for f in files:
             rel = os.path.relpath(os.path.join(d, f), tree)
             try:
@@ -268,7 +271,7 @@ def self_test():
     try:
         for label, target, mutate in cases:
             tree = os.path.join(base, label.replace(" ", "-").replace("'", ""))
-            shutil.copytree(repo, tree, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+            shutil.copytree(repo, tree, ignore=shutil.ignore_patterns(*UNSHIPPED))
             if mutate:
                 mutate(tree)
             red = [name for name, fn in CHECKS

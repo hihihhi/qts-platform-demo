@@ -214,6 +214,12 @@ class Cleansing(unittest.TestCase):
         for col in c:
             del c[col][20]  # a silent drop of a row that is not a duplicate
         self.assertTrue(cleanse.layer_diff(t, c, hits, log))
+        qm = _meta("quotes")
+        qday = next(d for d, h in qm["rule_counts"].items() if h["crossed_quote"])
+        q = _day("quotes", qday, clean=True)
+        i = q["flags"].index("crossed_quote")
+        q["flags"][i], q["flags"][i + 1] = q["flags"][i + 1], q["flags"][i]  # a flag moved to the next row
+        self.assertTrue(cleanse.layer_diff(_day("quotes", qday), q, qm["rule_counts"][qday], qm["corrections"][qday]))
         wrong = [list(e) for e in log]
         wrong[0][2] = wrong[0][2].replace("+00:00", "+01:00")  # a logged correction that is not the rule
         self.assertTrue(cleanse.layer_diff(t, _day("trades", day, clean=True), hits, wrong))
@@ -234,6 +240,16 @@ class Query(unittest.TestCase):
         self.assertEqual(r.partitions_read, ["2024-03-04", "2024-03-05"])
         b = query.fetch(LAKE, "trades_clean", ["SYM_A"], "2024-03-05", "2024-03-05T09:47", freq="5m")
         self.assertEqual(max(x["start"] for x in b.rows), "2024-03-05T09:40")  # 09:45 is still open
+
+    def test_utc_stamps_in_the_typed_table_are_bounded_as_instants(self):
+        """Review 2026-10-06: compared as text, the vendor's +00:00 stamps (01:50 UTC = 09:50 exchange time)
+        slipped past a 09:40 as-of bound and dropped out of the window they belong to."""
+        early = query.fetch(LAKE, "trades", ["SYM_B"], "2024-03-07", "2024-03-07T09:40").rows
+        self.assertFalse([r for r in early if cleanse.to_exchange_time(r["ts"]) >= "2024-03-07T09:40"])
+        typed = query.fetch(LAKE, "trades", ["SYM_B"], "2024-03-07T09:45", "2024-03-07T10:30").rows
+        clean = query.fetch(LAKE, "trades_clean", ["SYM_B"], "2024-03-07T09:45", "2024-03-07T10:30").rows
+        self.assertTrue([r for r in typed if r["ts"].endswith("+00:00")])  # the case is really exercised
+        self.assertEqual(len(typed), len(clean))
 
     def test_the_guard_is_what_holds_the_bound(self):
         with mock.patch.object(query, "as_of_guard", lambda rows, hi: (rows, 0)):
@@ -272,6 +288,13 @@ class Query(unittest.TestCase):
             query.fetch(LAKE, "trades_clean", ["SYM_Z"], "2024-03-04", "2024-03-04")
         with self.assertRaises(table.NoSuchSnapshot):
             query.fetch(LAKE, "trades_clean", ["SYM_A"], "2024-03-04", "2024-03-04", snapshot=9)
+        with self.assertRaises(table.NoSuchSnapshot):  # 0 is a version number, not "latest"
+            query.fetch(LAKE, "trades_clean", ["SYM_A"], "2024-03-04", "2024-03-04", snapshot=0)
+        with self.assertRaises(query.NoSuchInstrument):
+            query.fetch(LAKE, "trades_clean", [], "2024-03-04", "2024-03-04")
+        for freq in ("2d", "1h", "m", "0m"):
+            with self.assertRaises(ValueError, msg=freq):
+                query.fetch(LAKE, "trades_clean", ["SYM_A"], "2024-03-04", "2024-03-04", freq=freq)
         r = query.fetch(LAKE, "trades_clean", ["SYM_A"], "2024-03-04", "2024-03-08", on_missing="skip")
         self.assertEqual(r.skipped_days, [synth.MISSING_DAY])
 

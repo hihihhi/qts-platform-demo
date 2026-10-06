@@ -79,7 +79,7 @@ trades stamped in UTC instead of exchange time, closing-auction trades, and a mi
 - **cleansed** labels, flags or corrects and drops only exact duplicates. Each rule's hits are
   counted per day, and every corrected cell goes into a correction log with the vendor's value.
   The write-up records why: a time-window filter had silently discarded a day's closing-auction
-  trades ([showcase](https://github.com/oscar-chw/qts-platform-showcase#design-decisions-and-trade-offs)).
+  trades ([showcase](https://github.com/oscar-chw/qts-platform-showcase#results)).
 - **query** is `fetch(lake, table, universe, from_, to, freq=..., snapshot=..., gaps=...)`, with
   partition pruning and explicit errors (`MissingDay`, `NoSuchInstrument`, `LookAhead`). The read
   path hands over whole days, and an as-of guard withholds every row from `to` on;

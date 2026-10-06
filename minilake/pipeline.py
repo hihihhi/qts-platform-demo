@@ -45,6 +45,13 @@ def typed_columns(kind, path):
     return {name: [CAST[t](r[name]) for r in rowlist] for name, t in schema.items()}
 
 
+def _publish(tdir, schema, parts, meta=None):
+    """Make `parts` the only files of their days. A rebuild of unchanged raw files therefore adds a
+    version with the same rows, where an append doubled every day. Raises Conflict if another writer
+    touched these days since the head read here, rather than discard that write."""
+    return table.replace(tdir, schema, parts, base=table.latest(tdir), meta=meta)
+
+
 def build(lake, incoming):
     """Deliver, ingest, convert and cleanse. Returns what each layer did, for printing."""
     delivered = synth.generate(incoming)
@@ -57,13 +64,13 @@ def build(lake, incoming):
     for kind in SCHEMAS:
         parts = {name[len(kind) + 1:-4]: typed_columns(kind, raw.path_of(lake, name))
                  for name in sorted(raw.load_manifest(lake)) if name.startswith(kind + "_")}
-        v = table.publish(table_dir(lake, kind), SCHEMAS[kind], parts)
+        v = _publish(table_dir(lake, kind), SCHEMAS[kind], parts)
         clean_parts, counts, logs = {}, {}, {}
         for day, cols in parts.items():
             clean_parts[day], counts[day], logs[day] = cleanse.cleanse_day(kind, cols)
         schema = dict(SCHEMAS[kind], session="str", flags="str")
-        cv = table.publish(table_dir(lake, kind + "_clean"), schema, clean_parts,
-                           meta={"rule_counts": counts, "corrections": logs})
+        cv = _publish(table_dir(lake, kind + "_clean"), schema, clean_parts,
+                      meta={"rule_counts": counts, "corrections": logs})
         report["typed"][kind] = (v, {d: len(c["ts"]) for d, c in parts.items()})
         report["cleansed"][kind] = (cv, {d: len(c["ts"]) for d, c in clean_parts.items()}, counts, logs)
     return report

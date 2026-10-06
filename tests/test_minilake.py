@@ -209,6 +209,20 @@ def _meta(kind):
     return table.manifest(pipeline.table_dir(LAKE, kind + "_clean"), 1)["meta"]
 
 
+class Rebuild(unittest.TestCase):
+    def test_building_twice_does_not_double_any_day(self):
+        """Review 2026-10-06: build() appended, so a second run gave trades_clean v2 with every day twice."""
+        base = scratch()
+        lake, incoming = os.path.join(base, "lake"), os.path.join(base, "incoming")
+        pipeline.build(lake, incoming)
+        once = query.fetch(lake, "trades_clean", ["SYM_A"], "2024-03-04", "2024-03-04")
+        pipeline.build(lake, incoming)
+        twice = query.fetch(lake, "trades_clean", ["SYM_A"], "2024-03-04", "2024-03-04")
+        self.assertTrue(once.rows)
+        self.assertEqual(twice.snapshot, once.snapshot + 1)  # the second build really published
+        self.assertEqual(len(twice.rows), len(once.rows))
+
+
 class Cleansing(unittest.TestCase):
     def test_every_planted_problem_is_counted_exactly_as_planted(self):
         totals = dict.fromkeys(cleanse.RULES, 0)

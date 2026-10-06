@@ -78,6 +78,30 @@ class RawManifest(unittest.TestCase):
         self.assertEqual(sorted(raw.load_manifest(lake)), ["p.csv", "q.csv"])
         self.assertEqual(raw.verify(lake), [])
 
+    def test_a_failed_ingest_strands_no_read_only_file(self):
+        """Review 2026-10-06: a/t.csv was copied and made read-only before b/t.csv was refused, and the
+        manifest never listed it, so verify() blamed the wrong thing and re-ingest could not overwrite."""
+        base = scratch()
+        a, b = os.path.join(base, "a", "t.csv"), os.path.join(base, "b", "t.csv")
+        for path, text in ((a, "one\n"), (b, "two\n")):
+            os.makedirs(os.path.dirname(path))
+            with open(path, "w") as fh:
+                fh.write(text)
+        lake = os.path.join(base, "lake")
+        with self.assertRaises(ValueError):
+            raw.ingest(lake, [a, b])
+        self.assertEqual(os.listdir(os.path.join(lake, "raw")), [])
+        self.assertEqual(raw.ingest(lake, [a]), ["t.csv"])  # the name is still free
+        self.assertEqual(raw.verify(lake), [])
+
+        c = os.path.join(base, "c.csv")
+        with open(c, "w") as fh:
+            fh.write("three\n")
+        with mock.patch.object(raw, "write_json_atomic", side_effect=OSError("write failed")):
+            with self.assertRaises(OSError):
+                raw.ingest(lake, [c])
+        self.assertEqual(raw.verify(lake), [])  # c.csv's copy was removed with the failed manifest write
+
     def test_an_empty_raw_layer_is_not_a_pass(self):
         lake = scratch()
         os.makedirs(os.path.join(lake, "raw"))

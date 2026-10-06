@@ -50,20 +50,28 @@ def ingest(lake, paths):
     os.makedirs(_folder(lake), exist_ok=True)
     with open(os.path.join(lake, "raw.lock"), "w") as lock:  # outside raw/, which verify() lists
         fcntl.flock(lock, fcntl.LOCK_EX)
-        manifest, added = load_manifest(lake), []
-        for src in paths:
+        manifest, new = load_manifest(lake), {}
+        for src in paths:  # check the whole batch before copying: a refusal must leave nothing behind
             name, digest = os.path.basename(src), sha256(src)
-            if name in manifest:
-                if manifest[name]["sha256"] != digest:
-                    raise ValueError(f"raw/{name} is already held with different bytes; raw is never rewritten")
-                continue
-            dest = os.path.join(_folder(lake), name)
-            shutil.copyfile(src, dest)
-            os.chmod(dest, 0o444)
-            manifest[name] = {"sha256": digest, "size": os.path.getsize(dest)}
-            added.append(name)
-        write_json_atomic(os.path.join(_folder(lake), "manifest.json"), manifest)
-        return added
+            held = manifest.get(name, new.get(name))
+            if held and held["sha256"] != digest:
+                raise ValueError(f"raw/{name} is already held with different bytes; raw is never rewritten")
+            if not held:
+                new[name] = {"sha256": digest, "src": src}
+        copied = []
+        try:
+            for name, entry in new.items():
+                dest = os.path.join(_folder(lake), name)
+                shutil.copyfile(entry.pop("src"), dest)
+                copied.append(dest)
+                os.chmod(dest, 0o444)
+                entry["size"] = os.path.getsize(dest)
+            write_json_atomic(os.path.join(_folder(lake), "manifest.json"), {**manifest, **new})
+        except BaseException:  # a copy or the manifest write failed: unlist nothing, strand nothing
+            for dest in copied:
+                os.remove(dest)
+            raise
+        return list(new)
 
 
 def verify(lake):

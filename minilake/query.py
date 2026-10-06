@@ -59,7 +59,7 @@ def fetch(lake, name, universe, from_, to, freq=None, snapshot=None, gaps=None, 
     snapshot = table.latest(tdir) if snapshot is None else snapshot
     m = table.manifest(tdir, snapshot)
     lo, hi = bounds(from_, to)
-    days = [d for d in pipeline.calendar(lake) if lo[:10] <= d <= hi[:10]]
+    days = [d for d in pipeline.calendar(lake) if lo[:10] <= d and f"{d}T00:00" < hi]  # `to` is exclusive: a midnight `to` reads nothing of its own day
     skipped = sorted(set(days) - {e["partition"] for e in m["files"]})
     if skipped and on_missing == "raise":
         raise MissingDay(f"{', '.join(skipped)}: on the calendar, not in {name} snapshot {snapshot}")

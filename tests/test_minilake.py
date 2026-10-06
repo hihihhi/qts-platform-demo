@@ -313,6 +313,25 @@ class Query(unittest.TestCase):
         self.assertTrue([r for r in typed if r["ts"].endswith("+00:00")])  # the case is really exercised
         self.assertEqual(len(typed), len(clean))
 
+    def test_a_row_stamped_exactly_at_the_as_of_time_is_withheld(self):
+        """Review 2026-10-06: changing `<` to `<=` in as_of_guard passed every test and gate."""
+        rows = [{"ts": "2024-03-04T10:00:00.000"}, {"ts": "2024-03-04T10:00:00.001"},
+                {"ts": "2024-03-04T09:59:59.999"}, {"ts": "2024-03-04T02:00:00.000+00:00"}]  # last = 10:00 exchange
+        kept, withheld = query.as_of_guard(rows, "2024-03-04T10:00:00.000")
+        self.assertEqual([r["ts"] for r in kept], ["2024-03-04T09:59:59.999"])
+        self.assertEqual(withheld, 3)
+        stamp = query.fetch(LAKE, "trades_clean", ["SYM_A"], "2024-03-04", "2024-03-04").rows[40]["ts"]
+        r = query.fetch(LAKE, "trades_clean", ["SYM_A"], "2024-03-04", stamp)
+        self.assertNotIn(stamp, [x["ts"] for x in r.rows])
+        self.assertTrue([x for x in r.rows if x["ts"] < stamp])
+
+    def test_an_exclusive_midnight_to_does_not_demand_the_next_day(self):
+        """Review 2026-10-06: `to` at 00:00 pulled its own day into the partitions, so a day that is not
+        read (and may be missing) raised MissingDay."""
+        r = query.fetch(LAKE, "trades_clean", ["SYM_A"], "2024-03-05", "2024-03-06T00:00")
+        self.assertEqual(r.partitions_read, ["2024-03-05"])
+        self.assertEqual(r.skipped_days, [])
+
     def test_the_guard_is_what_holds_the_bound(self):
         with mock.patch.object(query, "as_of_guard", lambda rows, hi: (rows, 0)):
             r = query.fetch(LAKE, "trades_clean", ["SYM_A"], "2024-03-05", "2024-03-05T10:00")

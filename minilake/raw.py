@@ -6,6 +6,7 @@ A file enters once and is made read-only. Re-delivering the same bytes is a no-o
 under a name already held are refused, because the raw layer is never rewritten. verify() reports
 any held file whose bytes no longer match the manifest.
 """
+import fcntl
 import hashlib
 import json
 import os
@@ -42,22 +43,27 @@ def load_manifest(lake):
 
 
 def ingest(lake, paths):
-    """Copy delivered files into the raw layer; return the names newly added."""
+    """Copy delivered files into the raw layer; return the names newly added.
+
+    The call holds an exclusive lock on the lake: the manifest is read, extended and replaced as one
+    step, so two overlapping ingests cannot each write a manifest that omits the other's file."""
     os.makedirs(_folder(lake), exist_ok=True)
-    manifest, added = load_manifest(lake), []
-    for src in paths:
-        name, digest = os.path.basename(src), sha256(src)
-        if name in manifest:
-            if manifest[name]["sha256"] != digest:
-                raise ValueError(f"raw/{name} is already held with different bytes; raw is never rewritten")
-            continue
-        dest = os.path.join(_folder(lake), name)
-        shutil.copyfile(src, dest)
-        os.chmod(dest, 0o444)
-        manifest[name] = {"sha256": digest, "size": os.path.getsize(dest)}
-        added.append(name)
-    write_json_atomic(os.path.join(_folder(lake), "manifest.json"), manifest)
-    return added
+    with open(os.path.join(lake, "raw.lock"), "w") as lock:  # outside raw/, which verify() lists
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        manifest, added = load_manifest(lake), []
+        for src in paths:
+            name, digest = os.path.basename(src), sha256(src)
+            if name in manifest:
+                if manifest[name]["sha256"] != digest:
+                    raise ValueError(f"raw/{name} is already held with different bytes; raw is never rewritten")
+                continue
+            dest = os.path.join(_folder(lake), name)
+            shutil.copyfile(src, dest)
+            os.chmod(dest, 0o444)
+            manifest[name] = {"sha256": digest, "size": os.path.getsize(dest)}
+            added.append(name)
+        write_json_atomic(os.path.join(_folder(lake), "manifest.json"), manifest)
+        return added
 
 
 def verify(lake):

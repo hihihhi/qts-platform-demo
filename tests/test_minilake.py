@@ -5,7 +5,9 @@ Run from the top of the repository:  python3 -m unittest discover -s tests
 import os
 import shutil
 import tempfile
+import time
 import unittest
+from concurrent import futures
 from unittest import mock
 
 from minilake import cleanse, contend, gates, pipeline, query, raw, synth, table
@@ -53,6 +55,28 @@ class RawManifest(unittest.TestCase):
         with self.assertRaises(ValueError):
             raw.ingest(LAKE, [other])
         self.assertEqual(raw.ingest(LAKE, [raw.path_of(LAKE, name)]), [])  # same bytes: a no-op
+
+    def test_two_overlapping_ingests_both_land_in_the_manifest(self):
+        """Review 2026-10-06: with no lock the last manifest rename won and dropped the other's file."""
+        base = scratch()
+        srcs = []
+        for n in ("p.csv", "q.csv"):
+            srcs.append(os.path.join(base, n))
+            with open(srcs[-1], "w") as fh:
+                fh.write(f"bytes of {n}\n")
+        lake = os.path.join(base, "lake")
+        real = shutil.copyfile
+
+        def slow(*a):
+            time.sleep(0.2)  # widens the window in which both ingests have read the old manifest
+            return real(*a)
+
+        with mock.patch.object(raw.shutil, "copyfile", slow):
+            with futures.ThreadPoolExecutor(2) as pool:
+                for f in [pool.submit(raw.ingest, lake, [s]) for s in srcs]:
+                    f.result()
+        self.assertEqual(sorted(raw.load_manifest(lake)), ["p.csv", "q.csv"])
+        self.assertEqual(raw.verify(lake), [])
 
     def test_an_empty_raw_layer_is_not_a_pass(self):
         lake = scratch()
